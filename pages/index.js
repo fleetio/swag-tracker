@@ -599,6 +599,9 @@ export default function Home() {
   const skipNextSaveRef = useRef(false);
   const saveBlockedRef = useRef(false);
   const [syncError, setSyncError] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [isSigningIn, setIsSigningIn] = useState(false);
   const authEnabled = process.env.NODE_ENV === 'production' || process.env.NEXT_PUBLIC_SWAG_AUTH_ENABLED === 'true';
   const { data: session, status: sessionStatus } = useSession();
   const [statusFilter, setStatusFilter] = useState('all');
@@ -780,12 +783,25 @@ export default function Home() {
     setTagFilter('all');
   }
 
+  async function handlePasswordSignIn(event) {
+    event.preventDefault();
+    setAuthError('');
+    setIsSigningIn(true);
+    const response = await signIn('credentials', { password, redirect: false });
+    setIsSigningIn(false);
+    if (!response?.ok) {
+      setAuthError('That password was not recognized.');
+      return;
+    }
+    setPassword('');
+  }
+
   if (authEnabled && sessionStatus === 'loading') {
     return <main className="app-shell auth-screen"><p className="eyebrow eyebrow-green">Marketing operations</p><h1>Loading Swag Tracker…</h1></main>;
   }
 
   if (authEnabled && !session) {
-    return <main className="app-shell auth-screen"><p className="eyebrow eyebrow-green">Fleetio marketing operations</p><h1>Swag Tracker</h1><p className="hero-copy">Sign in with your Fleetio GitHub account to view and update shared swag data.</p><button className="primary-button" type="button" onClick={() => signIn('github')}>Sign in with Fleetio GitHub</button></main>;
+    return <main className="app-shell auth-screen"><p className="eyebrow eyebrow-green">Fleetio marketing operations</p><h1>Swag Tracker</h1><p className="hero-copy">Enter the shared password to view and update the swag workspace.</p><form className="auth-form" onSubmit={handlePasswordSignIn}><label className="form-label" htmlFor="tracker-password">Shared password</label><input className="form-input" id="tracker-password" name="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required aria-invalid={Boolean(authError)} />{authError && <p className="auth-error" role="alert">{authError}</p>}<button className="primary-button" type="submit" disabled={isSigningIn}>{isSigningIn ? 'Checking…' : 'Open tracker'}</button></form></main>;
   }
 
   return (

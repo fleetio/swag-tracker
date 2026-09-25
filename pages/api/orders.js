@@ -10,7 +10,7 @@ async function authorize(req, res) {
   if (!requiresAuthentication()) return true;
   const session = await getServerSession(req, res, authOptions);
   if (session) return true;
-  res.status(401).json({ error: 'Sign in with a Fleetio GitHub organization account to use the tracker.' });
+  res.status(401).json({ error: 'Enter the shared tracker password to use the tracker.' });
   return false;
 }
 

@@ -17,18 +17,11 @@ When the local store is still at revision zero, the app makes one best-effort im
 
 The production app uses:
 
-- GitHub OAuth with `read:org`, allowing only members of `GITHUB_ALLOWED_ORG`.
-- Vercel deployment protection/SSO as the production access gate.
+- A shared password stored in `SWAG_TRACKER_PASSWORD`, never in the repository.
 - A Postgres database connected through Vercel Marketplace storage.
 - Optimistic revision checks on every save. If another person has saved first, the second save is rejected and the UI asks the user to refresh instead of overwriting data.
 
-Create a GitHub OAuth app with this callback URL:
-
-```text
-https://YOUR-VERCEL-DOMAIN/api/auth/callback/github
-```
-
-Set the variables in `.env.example` in the Vercel project. Production builds require authentication, and you should also set `REQUIRE_SWAG_AUTH=true`, connect `DATABASE_URL` through a Postgres Marketplace integration, and enable Vercel SSO/deployment protection. The GitHub OAuth flow requests `read:org` with consent so Fleetio members can be reauthorized if the organization scope was not previously granted. Never commit `.env.local` or database credentials.
+Set the variables in `.env.example` in the Vercel project. Set `SWAG_TRACKER_PASSWORD` to the shared password, keep `REQUIRE_SWAG_AUTH=true`, connect `DATABASE_URL` through a Postgres Marketplace integration, and set `NEXTAUTH_URL` to the canonical production URL. Never commit `.env.local`, shared passwords, or database credentials.
 
 ## CDN images
 
