@@ -7,6 +7,7 @@ import { signIn, useSession } from 'next-auth/react';
 
 const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 const legacyStorageKeys = ['fleetio-swag-tracker-state-fall-drop-v1', 'fleetio-swag-tracker-state'];
+const statusColors = { sourcing: 'blue', production: 'yellow', shipped: 'green-200', stock: 'green' };
 
 function formatDate(value) {
   if (!value) return '—';
@@ -111,7 +112,8 @@ function costForTag(order, tag) {
 }
 
 function statusInfo(status) {
-  return statuses.find((item) => item.id === status) || statuses[0];
+  const info = statuses.find((item) => item.id === status) || statuses[0];
+  return { ...info, color: statusColors[info.id] || info.color };
 }
 
 function ImageThumb({ order, size = 'regular', decorative = false }) {
@@ -250,7 +252,7 @@ function StatusBoard({ orders, onSelect, onStatusChange }) {
           const statusOrders = orders.filter((order) => order.status === status.id);
           return (
             <div className={`status-column ${dragOverStatus === status.id ? 'status-column-drop-target' : ''}`} key={status.id} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDragOverStatus(status.id); }} onDragLeave={() => setDragOverStatus(null)} onDrop={(event) => dropOrder(event, status.id)} role="region" aria-label={`${status.label} drop zone`}>
-              <div className="status-column-heading"><span><i className={`legend-dot dot-${status.color}`} />{status.label}</span><strong>{statusOrders.length}</strong></div>
+              <div className="status-column-heading"><span><i className={`legend-dot dot-${statusInfo(status.id).color}`} />{status.label}</span><strong>{statusOrders.length}</strong></div>
               <div className="status-column-items">
                 {statusOrders.map((order) => (
                   <button className={`board-card ${draggingId === order.id ? 'board-card-dragging' : ''}`} key={order.id} type="button" draggable="true" onDragStart={(event) => startDragging(event, order)} onDragEnd={finishDragging} onKeyDown={(event) => moveWithKeyboard(event, order)} onClick={() => onSelect(order)} aria-describedby="board-instructions" aria-keyshortcuts="ArrowLeft ArrowRight" aria-label={`${order.itemName}, ${status.label}. Drag to move status or click to open details.`}>
@@ -293,7 +295,7 @@ function Timeline({ orders, viewDate, onSelect }) {
           <h2 id="timeline-heading">In-flight timeline</h2>
         </div>
         <div className="timeline-legend">
-          {statuses.map((status) => <span key={status.id}><i className={`legend-dot dot-${status.color}`} />{status.label}</span>)}
+          {statuses.map((status) => <span key={status.id}><i className={`legend-dot dot-${statusInfo(status.id).color}`} />{status.label}</span>)}
         </div>
       </div>
       {timelineOrders.length ? <div className="timeline-scroll">
