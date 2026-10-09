@@ -423,10 +423,11 @@ function OrderDrawer({ order, onClose, onStatusChange, onSave, onDelete, availab
   const changeStatus = (event) => {
     const nextStatus = event.target.value;
     const today = localToday();
-    const nextShipDate = nextStatus === 'shipped' && !order.shipDate ? today : order.shipDate;
-    const nextArrivalDate = nextStatus === 'stock' && !order.arrivalDate ? today : order.arrivalDate;
+    const nextStartDate = order.status === 'sourcing' && nextStatus === 'production' ? today : order.startDate;
+    const nextShipDate = order.status === 'production' && nextStatus === 'shipped' ? today : order.shipDate;
+    const nextArrivalDate = order.status === 'shipped' && nextStatus === 'stock' ? today : order.arrivalDate;
     onStatusChange(order.id, nextStatus);
-    setDraft((current) => ({ ...current, status: nextStatus, shipDate: nextShipDate, arrivalDate: nextArrivalDate }));
+    setDraft((current) => ({ ...current, status: nextStatus, startDate: nextStartDate, shipDate: nextShipDate, arrivalDate: nextArrivalDate }));
   };
   const addVariant = () => setDraft((current) => ({ ...current, variants: [...current.variants, { id: `${current.id}-variant-${Date.now()}`, size: '', quantity: 0, stockOnHand: null, unitCost: Number(current.unitCost || 0).toFixed(2) }] }));
   const removeVariant = (index) => setDraft((current) => ({ ...current, variants: current.variants.length > 1 ? current.variants.filter((_, variantIndex) => variantIndex !== index) : current.variants }));
@@ -713,15 +714,17 @@ export default function Home() {
     const today = localToday();
     setOrders((current) => current.map((order) => {
       if (order.id !== id) return order;
-      const nextShipDate = status === 'shipped' && !order.shipDate ? today : order.shipDate;
-      const nextArrivalDate = status === 'stock' && !order.arrivalDate ? today : order.arrivalDate;
-      return withStageDates({ ...order, status, shipDate: nextShipDate, arrivalDate: nextArrivalDate });
+      const nextStartDate = order.status === 'sourcing' && status === 'production' ? today : order.startDate;
+      const nextShipDate = order.status === 'production' && status === 'shipped' ? today : order.shipDate;
+      const nextArrivalDate = order.status === 'shipped' && status === 'stock' ? today : order.arrivalDate;
+      return withStageDates({ ...order, status, startDate: nextStartDate, shipDate: nextShipDate, arrivalDate: nextArrivalDate });
     }));
     setSelectedOrder((current) => {
       if (!current || current.id !== id) return current;
-      const nextShipDate = status === 'shipped' && !current.shipDate ? today : current.shipDate;
-      const nextArrivalDate = status === 'stock' && !current.arrivalDate ? today : current.arrivalDate;
-      return withStageDates({ ...current, status, shipDate: nextShipDate, arrivalDate: nextArrivalDate });
+      const nextStartDate = current.status === 'sourcing' && status === 'production' ? today : current.startDate;
+      const nextShipDate = current.status === 'production' && status === 'shipped' ? today : current.shipDate;
+      const nextArrivalDate = current.status === 'shipped' && status === 'stock' ? today : current.arrivalDate;
+      return withStageDates({ ...current, status, startDate: nextStartDate, shipDate: nextShipDate, arrivalDate: nextArrivalDate });
     });
   }
 
