@@ -9,17 +9,15 @@ export const statuses = [
 ];
 
 export const tags = ['ABM', 'Fleet Locker', 'CKO', 'Event Marketing', 'Customer Gifts', 'Internal'];
+export const categories = ['Apparel', 'Drinkware', 'Stationery', 'Travel', 'Misc'];
 
 const sharedFields = {
   vendor: 'Concepts',
-  campaign: 'Fall swag drop',
   tags: ['Fleet Locker'],
   notes: '',
   startDate: defaultSourcingDate,
-  estimatedShipDate: '',
-  actualShippedDate: '',
-  estimatedArrivalDate: '',
-  actualArrivalDate: '',
+  shipDate: '',
+  arrivalDate: '',
 };
 
 const seededOrders = [
@@ -128,14 +126,23 @@ const seededOrders = [
     quantity: 1000, stockOnHand: null, unitCost: 1.75, setupCost: 35, status: 'sourcing', ...sharedFields,
   },
   {
-    id: 'existing-007', itemName: 'LS shirt', image: 'ls-shirt-front.png', category: 'Apparel', size: '', color: '',
-    quantity: 180, stockOnHand: null, unitCost: 24, setupCost: 0, status: 'production', tags: ['Fleet Locker'],
-    vendor: 'Concepts', campaign: 'Fall swag drop', notes: '', startDate: defaultSourcingDate, estimatedShipDate: '2026-09-17', estimatedArrivalDate: '2026-09-24', actualArrivalDate: '',
+    id: 'existing-007', itemName: 'Skyline Long Sleeve T-Shirt', image: 'ls-shirt-front.png', category: 'Apparel', size: '', color: '',
+    quantity: 113, stockOnHand: null, unitCost: 24, setupCost: 0, status: 'production', tags: ['Fleet Locker'],
+    variants: [
+      { id: 'existing-007-S', size: 'S', quantity: 15, stockOnHand: null, unitCost: 24 },
+      { id: 'existing-007-M', size: 'M', quantity: 25, stockOnHand: null, unitCost: 24 },
+      { id: 'existing-007-L', size: 'L', quantity: 25, stockOnHand: null, unitCost: 24 },
+      { id: 'existing-007-XL', size: 'XL', quantity: 25, stockOnHand: null, unitCost: 24 },
+      { id: 'existing-007-2XL', size: '2XL', quantity: 15, stockOnHand: null, unitCost: 24 },
+      { id: 'existing-007-3XL', size: '3XL', quantity: 5, stockOnHand: null, unitCost: 24 },
+      { id: 'existing-007-4XL', size: '4XL', quantity: 3, stockOnHand: null, unitCost: 24 },
+    ],
+    vendor: 'Concepts', notes: '', startDate: defaultSourcingDate, shipDate: '2026-09-17', arrivalDate: '2026-09-24',
   },
   {
     id: 'existing-009', itemName: 'Rain jacket', image: 'rainjacket.png', category: 'Apparel', size: '', color: '',
     quantity: 75, stockOnHand: null, unitCost: 56, setupCost: 0, status: 'production', tags: ['Fleet Locker'],
-    vendor: 'Concepts', campaign: 'Fall swag drop', notes: '', startDate: defaultSourcingDate, estimatedShipDate: '2026-10-23', estimatedArrivalDate: '2026-10-30', actualArrivalDate: '',
+    vendor: 'Concepts', notes: '', startDate: defaultSourcingDate, shipDate: '2026-10-23', arrivalDate: '2026-10-30',
   },
 ];
 
@@ -153,8 +160,8 @@ function midpoint(start, end, ratio) {
 }
 
 export function withStageDates(order) {
-  const shipped = order.actualShippedDate || order.estimatedShipDate;
-  const arrival = order.actualArrivalDate || order.estimatedArrivalDate;
+  const shipped = order.shipDate;
+  const arrival = order.arrivalDate;
   const productionStart = midpoint(order.startDate, shipped, 0.32);
   const productionEnd = midpoint(order.startDate, shipped, 0.86);
   return {
@@ -181,7 +188,7 @@ export function collapseVariantOrders(orders) {
       return;
     }
 
-    const groupKey = [match[1], order.vendor, order.campaign, order.image, order.category, order.color].join('|');
+    const groupKey = [match[1], order.vendor, order.image, order.category, order.color].join('|');
     let group = groupMap.get(groupKey);
     if (!group) {
       group = {

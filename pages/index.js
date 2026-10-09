@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { collapseVariantOrders, defaultSourcingDate, getImageUrl, initialOrders, statuses, tags, withStageDates } from '../data/swagOrders';
+import { categories, collapseVariantOrders, defaultSourcingDate, getImageUrl, initialOrders, statuses, tags, withStageDates } from '../data/swagOrders';
 import { signIn, useSession } from 'next-auth/react';
 
 const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
@@ -55,14 +55,24 @@ function stockValue(order) {
 }
 
 function arrivalDate(order) {
-  return order.actualArrivalDate || order.estimatedArrivalDate;
+  return order.arrivalDate;
 }
 
 function shipDate(order) {
-  return order.actualShippedDate || order.estimatedShipDate;
+  return order.shipDate;
+}
+
+function hasTimelineDates(order) {
+  return Object.values(order.stageDates || {}).some((dates) => dates.start && dates.end);
 }
 
 function normalizeOrder(order) {
+  const normalizedOrder = { ...order };
+  delete normalizedOrder.campaign;
+  delete normalizedOrder.estimatedShipDate;
+  delete normalizedOrder.actualShippedDate;
+  delete normalizedOrder.estimatedArrivalDate;
+  delete normalizedOrder.actualArrivalDate;
   const variants = Array.isArray(order.variants) ? order.variants.map((variant, index) => ({
     id: variant.id || `${order.id || 'swag'}-variant-${index}`,
     size: variant.size || 'One size',
@@ -73,14 +83,13 @@ function normalizeOrder(order) {
   const quantity = variants.length ? variants.reduce((sum, variant) => sum + variant.quantity, 0) : Number(order.quantity) || 0;
   const weightedCost = variants.reduce((sum, variant) => sum + variant.quantity * variant.unitCost, 0);
   return withStageDates({
-    ...order,
+    ...normalizedOrder,
     image: order.image || '',
     itemName: order.itemName || '',
     vendor: order.vendor || '',
-    campaign: order.campaign || '',
     notes: order.notes || '',
     status: order.status || 'sourcing',
-    category: order.category || '',
+    category: categories.includes(order.category) ? order.category : '',
     size: order.size || '',
     color: order.color || '',
     tags: Array.isArray(order.tags) ? order.tags : [],
@@ -89,10 +98,8 @@ function normalizeOrder(order) {
     setupCost: Number(order.setupCost) || 0,
     variants,
     startDate: order.startDate || '',
-    estimatedShipDate: order.estimatedShipDate || '',
-    actualShippedDate: order.actualShippedDate || '',
-    estimatedArrivalDate: order.estimatedArrivalDate || '',
-    actualArrivalDate: order.actualArrivalDate || '',
+    shipDate: order.shipDate || order.actualShippedDate || order.estimatedShipDate || '',
+    arrivalDate: order.arrivalDate || order.actualArrivalDate || order.estimatedArrivalDate || '',
   });
 }
 
@@ -160,7 +167,7 @@ function Calendar({ orders, viewDate, onChangeMonth, onSelect }) {
     <section className="panel calendar-panel" aria-labelledby="calendar-heading">
       <div className="section-heading">
         <div>
-          <p className="eyebrow-sm">Estimated ship dates</p>
+          <p className="eyebrow-sm">Ship dates</p>
           <h2 id="calendar-heading">{new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(viewDate)}</h2>
         </div>
         <div className="calendar-controls"><button className="quiet-button" type="button" onClick={() => onChangeMonth(-1)} aria-label="Previous month">←</button><button className="quiet-button" type="button" onClick={() => onChangeMonth(0)}>Today</button><button className="quiet-button" type="button" onClick={() => onChangeMonth(1)} aria-label="Next month">→</button></div>
@@ -246,7 +253,7 @@ function StatusBoard({ orders, onSelect, onStatusChange }) {
                 {statusOrders.map((order) => (
                   <button className={`board-card ${draggingId === order.id ? 'board-card-dragging' : ''}`} key={order.id} type="button" draggable="true" onDragStart={(event) => startDragging(event, order)} onDragEnd={finishDragging} onKeyDown={(event) => moveWithKeyboard(event, order)} onClick={() => onSelect(order)} aria-describedby="board-instructions" aria-keyshortcuts="ArrowLeft ArrowRight" aria-label={`${order.itemName}, ${status.label}. Drag to move status or click to open details.`}>
                     <ImageThumb key={`${order.id}-${order.image}`} order={order} size="small" decorative />
-                    <span className="board-card-copy"><strong>{order.itemName}</strong><small>{order.quantity} units · {currency.format(displayUnitCost(order))} each · {formatDate(shipDate(order))}</small><span className="tag-list">{order.tags.slice(0, 2).map((tag) => <Tag key={tag}>{tag}</Tag>)}</span></span>
+                    <span className="board-card-copy"><strong>{order.itemName}</strong><small>{order.quantity} units · {currency.format(displayUnitCost(order))} each{shipDate(order) ? ` · ${formatDate(shipDate(order))}` : ''}</small><span className="tag-list">{order.tags.slice(0, 2).map((tag) => <Tag key={tag}>{tag}</Tag>)}</span></span>
                   </button>
                 ))}
                 {!statusOrders.length && <p className="empty-column">Nothing here yet.</p>}
@@ -261,6 +268,7 @@ function StatusBoard({ orders, onSelect, onStatusChange }) {
 }
 
 function Timeline({ orders, viewDate, onSelect }) {
+  const timelineOrders = orders.filter(hasTimelineDates);
   const timelineStartDate = new Date(viewDate);
   timelineStartDate.setDate(1);
   const timelineEndDate = new Date(viewDate);
@@ -286,20 +294,19 @@ function Timeline({ orders, viewDate, onSelect }) {
           {statuses.map((status) => <span key={status.id}><i className={`legend-dot dot-${status.color}`} />{status.label}</span>)}
         </div>
       </div>
-      {orders.length ? <div className="timeline-scroll">
+      {timelineOrders.length ? <div className="timeline-scroll">
         <div className="timeline-head">
           <span>Item</span>
           <div className="timeline-months"><span>{monthLabel(viewDate)}</span><span>{monthLabel(nextMonth)}</span></div>
         </div>
         <div className="timeline-body">
-          {orders.map((order) => {
+          {timelineOrders.map((order) => {
             const segments = Object.entries(order.stageDates).filter(([, dates]) => dates.start && dates.end).map(([stage, dates]) => ({ stage, left: getPosition(dates.start), width: `max(1.5rem, calc(${getPosition(dates.end)} - ${getPosition(dates.start)}))` }));
             return (
               <div className="timeline-row" key={order.id}>
                 <button className="timeline-name" type="button" onClick={() => onSelect(order)} aria-label={`Open ${order.itemName} details`}><ImageThumb key={`${order.id}-${order.image}`} order={order} size="small" decorative /><span className="timeline-name-copy"><strong>{order.itemName}</strong><small>{currency.format(displayUnitCost(order))} each</small></span></button>
                 <button className="timeline-track" type="button" onClick={() => onSelect(order)} aria-label={`Open ${order.itemName} timeline`}>
                   {segments.map((segment) => <span className={`timeline-segment segment-${segment.stage}`} key={segment.stage} style={{ left: segment.left, width: segment.width }} title={`${segment.stage}: ${formatDate(order.stageDates[segment.stage].start)} to ${formatDate(order.stageDates[segment.stage].end)}`} />)}
-                  {!segments.length && <span className="timeline-tbd">Dates needed</span>}
                   {segments.length > 0 && todayPosition !== '0%' && todayPosition !== '100%' && <span className="today-line" style={{ left: todayPosition }}><span>Today</span></span>}
                 </button>
               </div>
@@ -354,12 +361,10 @@ function createDrawerDraft(order) {
 function OrderDrawer({ order, onClose, onStatusChange, onSave, onDelete, availableTags = [], onAddTag }) {
   const drawerRef = useRef(null);
   const closeButtonRef = useRef(null);
-  const editButtonRef = useRef(null);
   const editFormRef = useRef(null);
   const deleteButtonRef = useRef(null);
   const confirmDeleteButtonRef = useRef(null);
   const [isDeleteConfirming, setIsDeleteConfirming] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
   const [newTag, setNewTag] = useState('');
   const [draft, setDraft] = useState(() => createDrawerDraft(order));
 
@@ -368,20 +373,9 @@ function OrderDrawer({ order, onClose, onStatusChange, onSave, onDelete, availab
     requestAnimationFrame(() => deleteButtonRef.current?.focus());
   }
 
-  function cancelEditing() {
-    setIsEditing(false);
-    setDraft(createDrawerDraft(order));
-    setNewTag('');
-    requestAnimationFrame(() => editButtonRef.current?.focus());
-  }
-
   useEffect(() => {
     if (isDeleteConfirming) confirmDeleteButtonRef.current?.focus();
   }, [isDeleteConfirming]);
-
-  useEffect(() => {
-    if (isEditing) editFormRef.current?.querySelector('input, select, textarea')?.focus();
-  }, [isEditing]);
 
   useEffect(() => {
     closeButtonRef.current?.focus();
@@ -395,18 +389,11 @@ function OrderDrawer({ order, onClose, onStatusChange, onSave, onDelete, availab
           cancelDeleteConfirmation();
           return;
         }
-        if (isEditing) {
-          setIsEditing(false);
-          setDraft(createDrawerDraft(order));
-          setNewTag('');
-          requestAnimationFrame(() => editButtonRef.current?.focus());
-          return;
-        }
         onClose();
         return;
       }
       if (event.key !== 'Tab' || !drawerRef.current) return;
-      const focusable = drawerRef.current.querySelectorAll('button, select, input, a[href]');
+      const focusable = drawerRef.current.querySelectorAll('button, select, input, textarea, a[href]');
       if (!focusable.length) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
@@ -420,7 +407,7 @@ function OrderDrawer({ order, onClose, onStatusChange, onSave, onDelete, availab
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isDeleteConfirming, isEditing, onClose, order]);
+  }, [isDeleteConfirming, onClose, order]);
 
   if (!order) return null;
   const draftTags = Array.isArray(draft.tags) ? draft.tags : [];
@@ -430,10 +417,10 @@ function OrderDrawer({ order, onClose, onStatusChange, onSave, onDelete, availab
   const changeStatus = (event) => {
     const nextStatus = event.target.value;
     const today = localToday();
-    const actualShippedDate = nextStatus === 'shipped' && !order.actualShippedDate ? today : order.actualShippedDate;
-    const actualArrivalDate = nextStatus === 'stock' && !order.actualArrivalDate ? today : order.actualArrivalDate;
+    const nextShipDate = nextStatus === 'shipped' && !order.shipDate ? today : order.shipDate;
+    const nextArrivalDate = nextStatus === 'stock' && !order.arrivalDate ? today : order.arrivalDate;
     onStatusChange(order.id, nextStatus);
-    setDraft((current) => ({ ...current, status: nextStatus, actualShippedDate, actualArrivalDate }));
+    setDraft((current) => ({ ...current, status: nextStatus, shipDate: nextShipDate, arrivalDate: nextArrivalDate }));
   };
   const addVariant = () => setDraft((current) => ({ ...current, variants: [...current.variants, { id: `${current.id}-variant-${Date.now()}`, size: '', quantity: 0, stockOnHand: null, unitCost: current.unitCost || 0 }] }));
   const removeVariant = (index) => setDraft((current) => ({ ...current, variants: current.variants.length > 1 ? current.variants.filter((_, variantIndex) => variantIndex !== index) : current.variants }));
@@ -446,31 +433,25 @@ function OrderDrawer({ order, onClose, onStatusChange, onSave, onDelete, availab
     setDraft((current) => ({ ...current, tags: current.tags.includes(canonicalTag) ? current.tags : [...current.tags, canonicalTag] }));
     setNewTag('');
   };
+  const saveDraft = () => {
+    onSave({ ...draft, variants: draft.variants.map((variant) => ({ ...variant, quantity: Number(variant.quantity) || 0, stockOnHand: variant.stockOnHand === '' || variant.stockOnHand == null ? null : Number(variant.stockOnHand), unitCost: Number(variant.unitCost) || 0 })) });
+  };
   const submitEdit = (event) => {
     event.preventDefault();
-    onSave({ ...draft, variants: draft.variants.map((variant) => ({ ...variant, quantity: Number(variant.quantity) || 0, stockOnHand: variant.stockOnHand === '' || variant.stockOnHand == null ? null : Number(variant.stockOnHand), unitCost: Number(variant.unitCost) || 0 })) });
-    setIsEditing(false);
+    saveDraft();
   };
   return (
     <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <aside className="drawer" ref={drawerRef} aria-labelledby="drawer-heading" role="dialog" aria-modal="true">
         <div className="drawer-header"><span className="eyebrow-sm">Order details</span><button className="close-button" ref={closeButtonRef} type="button" onClick={onClose} aria-label="Close order details">×</button></div>
         <ImageThumb key={`${order.id}-${order.image}`} order={order} size="drawer" />
-        <h2 id="drawer-heading">{isEditing ? 'Edit item details' : order.itemName}</h2>
-        {isEditing ? <form className="drawer-edit-form" ref={editFormRef} onSubmit={submitEdit}>
-          <div className="drawer-edit-grid"><div><label className="eyebrow-sm form-label" htmlFor="drawer-item-name">Item name</label><input id="drawer-item-name" className="form-input" value={draft.itemName} onChange={(event) => updateDraft('itemName', event.target.value)} required /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-status">Status</label><select id="drawer-status" className="form-input" value={draft.status} onChange={(event) => updateDraft('status', event.target.value)}>{statuses.map((status) => <option value={status.id} key={status.id}>{status.label}</option>)}</select></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-image">Image filename or path</label><input id="drawer-image" className="form-input" value={draft.image} onChange={(event) => updateDraft('image', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-category">Category</label><input id="drawer-category" className="form-input" value={draft.category} onChange={(event) => updateDraft('category', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-color">Color</label><input id="drawer-color" className="form-input" value={draft.color} onChange={(event) => updateDraft('color', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-vendor">Vendor / company</label><input id="drawer-vendor" className="form-input" value={draft.vendor} onChange={(event) => updateDraft('vendor', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-campaign">Campaign</label><input id="drawer-campaign" className="form-input" value={draft.campaign} onChange={(event) => updateDraft('campaign', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-setup-cost">Setup cost</label><input id="drawer-setup-cost" className="form-input" type="number" min="0" step="0.01" value={draft.setupCost || 0} onChange={(event) => updateDraft('setupCost', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-start-date">Production started</label><input id="drawer-start-date" className="form-input" type="date" value={draft.startDate} onChange={(event) => updateDraft('startDate', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-ship-date">Estimated ship</label><input id="drawer-ship-date" className="form-input" type="date" min={draft.startDate || undefined} value={draft.estimatedShipDate} onChange={(event) => updateDraft('estimatedShipDate', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-actual-shipped-date">Actual shipped</label><input id="drawer-actual-shipped-date" className="form-input" type="date" min={draft.startDate || undefined} value={draft.actualShippedDate} onChange={(event) => updateDraft('actualShippedDate', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-arrival-date">Estimated arrival</label><input id="drawer-arrival-date" className="form-input" type="date" min={draft.actualShippedDate || draft.estimatedShipDate || undefined} value={draft.estimatedArrivalDate} onChange={(event) => updateDraft('estimatedArrivalDate', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-actual-arrival">Actual arrival</label><input id="drawer-actual-arrival" className="form-input" type="date" min={draft.actualShippedDate || draft.estimatedShipDate || undefined} value={draft.actualArrivalDate} onChange={(event) => updateDraft('actualArrivalDate', event.target.value)} /></div></div>
+        <h2 id="drawer-heading">{order.itemName}</h2>
+        <form className="drawer-edit-form" ref={editFormRef} onSubmit={submitEdit} onBlur={() => saveDraft()}>
+          <div className="drawer-edit-grid"><div><label className="eyebrow-sm form-label" htmlFor="drawer-item-name">Item name</label><input id="drawer-item-name" className="form-input" value={draft.itemName} onChange={(event) => updateDraft('itemName', event.target.value)} required /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-status">Status</label><select id="drawer-status" className="form-input" value={draft.status} onChange={(event) => updateDraft('status', event.target.value)}>{statuses.map((status) => <option value={status.id} key={status.id}>{status.label}</option>)}</select></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-image">Image path</label><input id="drawer-image" className="form-input" value={draft.image} onChange={(event) => updateDraft('image', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-category">Category</label><select id="drawer-category" className="form-input" value={draft.category} onChange={(event) => updateDraft('category', event.target.value)}><option value="">Select a category</option>{categories.map((category) => <option value={category} key={category}>{category}</option>)}</select></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-color">Color</label><input id="drawer-color" className="form-input" value={draft.color} onChange={(event) => updateDraft('color', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-vendor">Vendor / company</label><input id="drawer-vendor" className="form-input" value={draft.vendor} onChange={(event) => updateDraft('vendor', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-setup-cost">Setup cost</label><input id="drawer-setup-cost" className="form-input" type="number" min="0" step="0.01" value={draft.setupCost || 0} onChange={(event) => updateDraft('setupCost', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-start-date">Production started</label><input id="drawer-start-date" className="form-input" type="date" value={draft.startDate} onChange={(event) => updateDraft('startDate', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-ship-date">Ship date</label><input id="drawer-ship-date" className="form-input" type="date" min={draft.startDate || undefined} value={draft.shipDate} onChange={(event) => updateDraft('shipDate', event.target.value)} /></div><div><label className="eyebrow-sm form-label" htmlFor="drawer-arrival-date">Arrival date</label><input id="drawer-arrival-date" className="form-input" type="date" min={draft.shipDate || undefined} value={draft.arrivalDate} onChange={(event) => updateDraft('arrivalDate', event.target.value)} /></div></div>
           <fieldset className="drawer-variant-fieldset"><legend className="eyebrow-sm form-label">Sizes and costs</legend><div className="drawer-variant-list">{draft.variants.map((variant, index) => <div className="drawer-variant-row" key={variant.id || `variant-${index}`}><input className="form-input" aria-label={`Size ${index + 1}`} value={variant.size} onChange={(event) => updateVariant(index, 'size', event.target.value)} placeholder="Size" /><input className="form-input" aria-label={`Quantity for size ${index + 1}`} type="number" min="0" step="1" value={variant.quantity} onChange={(event) => updateVariant(index, 'quantity', event.target.value)} placeholder="Qty" /><input className="form-input" aria-label={`Unit cost for size ${index + 1}`} type="number" min="0" step="0.01" value={variant.unitCost} onChange={(event) => updateVariant(index, 'unitCost', event.target.value)} placeholder="Unit cost" /><input className="form-input" aria-label={`Stock for size ${index + 1}`} type="number" min="0" step="1" value={variant.stockOnHand ?? ''} onChange={(event) => updateVariant(index, 'stockOnHand', event.target.value)} placeholder="Stock" /><button className="close-button" type="button" onClick={() => removeVariant(index)} aria-label={`Remove size ${variant.size || index + 1}`}>×</button></div>)}</div><button className="secondary-button" type="button" onClick={addVariant}>Add size</button></fieldset>
           <fieldset className="tag-fieldset"><legend className="eyebrow-sm form-label">Tags</legend><div className="tag-checkboxes">{tagOptions.map((tag) => <label className="checkbox-option" key={tag}><input type="checkbox" checked={draftTags.includes(tag)} onChange={() => toggleTag(tag)} />{tag}</label>)}</div><div className="new-tag-row"><label className="sr-only" htmlFor="drawer-new-tag">New tag name</label><input id="drawer-new-tag" className="form-input" value={newTag} onChange={(event) => setNewTag(event.target.value)} placeholder="Create a new tag" /><button className="secondary-button" type="button" onClick={addTag}>Add tag</button></div></fieldset>
-          <div><label className="eyebrow-sm form-label" htmlFor="drawer-notes">Notes</label><textarea id="drawer-notes" className="form-input form-textarea" value={draft.notes} onChange={(event) => updateDraft('notes', event.target.value)} rows="3" /></div><div className="modal-actions"><button className="secondary-button" type="button" onClick={cancelEditing}>Cancel</button><button className="primary-button" type="submit">Save changes</button></div>
-        </form> : <>
-          <p className="muted-text">{order.campaign} · {order.vendor}</p>
-          <div className="drawer-field"><label htmlFor="order-status">Current status</label><select id="order-status" value={order.status} onChange={changeStatus}>{statuses.map((status) => <option value={status.id} key={status.id}>{status.label}</option>)}</select><button className="secondary-button full-width-button" ref={editButtonRef} type="button" onClick={() => setIsEditing(true)}>Edit item details</button></div>
-          <div className="detail-grid"><div><span className="eyebrow-sm">Quantity</span><strong>{order.quantity}</strong></div><div><span className="eyebrow-sm">Unit cost{order.variants?.length > 1 ? ' (median)' : ''}</span><strong>{currency.format(displayUnitCost(order))}</strong></div><div><span className="eyebrow-sm">Product value</span><strong>{currency.format(totalCost(order))}</strong></div><div><span className="eyebrow-sm">Setup cost</span><strong>{currency.format(order.setupCost || 0)}</strong></div><div><span className="eyebrow-sm">Order value</span><strong>{currency.format(orderCommitment(order))}</strong></div></div>
-          {order.variants?.length > 1 && <div className="detail-block"><span className="eyebrow-sm">Sizes</span><div className="variant-summary">{order.variants.map((variant) => <div key={variant.size}><strong>{variant.size}</strong><span>{variant.quantity} units · {currency.format(variant.unitCost)} each{variant.stockOnHand == null ? '' : ` · ${variant.stockOnHand} in stock`}</span></div>)}</div></div>}
-          <div className="detail-block"><span className="eyebrow-sm">Tags</span><div className="tag-list">{order.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}</div></div>
-          <dl className="date-list"><div><dt>Production started</dt><dd>{formatLongDate(order.startDate)}</dd></div><div><dt>{order.actualShippedDate ? 'Shipped' : 'Estimated ship'}</dt><dd>{formatLongDate(order.actualShippedDate || order.estimatedShipDate)}</dd></div><div><dt>{order.actualArrivalDate ? 'Arrived' : 'Estimated arrival'}</dt><dd>{formatLongDate(arrivalDate(order))}</dd></div></dl>
-          <div className="notes-block"><span className="eyebrow-sm">Notes</span><p>{order.notes}</p></div>
-        </>}
+          <div><label className="eyebrow-sm form-label" htmlFor="drawer-notes">Notes</label><textarea id="drawer-notes" className="form-input form-textarea" value={draft.notes} onChange={(event) => updateDraft('notes', event.target.value)} rows="3" /></div><p className="form-helper">Changes save automatically when you leave a field.</p>
+        </form>
         {!isDeleteConfirming ? <button className="danger-button full-width-button" ref={deleteButtonRef} type="button" onClick={() => setIsDeleteConfirming(true)}>Delete item</button> : <div className="delete-confirm" role="alert"><p>Remove <strong>{order.itemName}</strong> from the tracker? This cannot be undone.</p><div className="delete-confirm-actions"><button className="secondary-button" type="button" onClick={cancelDeleteConfirmation}>Cancel</button><button className="danger-button" ref={confirmDeleteButtonRef} type="button" onClick={() => onDelete(order.id)}>Delete permanently</button></div></div>}
       </aside>
     </div>
@@ -491,17 +472,14 @@ const blankOrder = {
   status: 'sourcing',
   tags: [],
   vendor: '',
-  campaign: '',
   startDate: defaultSourcingDate,
-  estimatedShipDate: '',
-  actualShippedDate: '',
-  estimatedArrivalDate: '',
-  actualArrivalDate: '',
+  shipDate: '',
+  arrivalDate: '',
   notes: '',
 };
 
 function ItemModal({ order, availableTags = [], isOpen, onClose, onSave, onAddTag }) {
-  const [draft, setDraft] = useState(() => ({ ...blankOrder, ...(order || {}), image: order?.image || '', tags: Array.isArray(order?.tags) ? order.tags : [], startDate: order?.startDate || defaultSourcingDate, estimatedShipDate: order?.estimatedShipDate || '', actualShippedDate: order?.actualShippedDate || '', estimatedArrivalDate: order?.estimatedArrivalDate || '', actualArrivalDate: order?.actualArrivalDate || '' }));
+  const [draft, setDraft] = useState(() => ({ ...blankOrder, ...(order || {}), image: order?.image || '', tags: Array.isArray(order?.tags) ? order.tags : [], startDate: order?.startDate || defaultSourcingDate, shipDate: order?.shipDate || '', arrivalDate: order?.arrivalDate || '' }));
   const [newTag, setNewTag] = useState('');
   const modalRef = useRef(null);
   const closeButtonRef = useRef(null);
@@ -556,8 +534,8 @@ function ItemModal({ order, availableTags = [], isOpen, onClose, onSave, onAddTa
       <section className="item-modal" ref={modalRef} role="dialog" aria-modal="true" aria-labelledby="item-modal-heading">
         <div className="modal-header"><div><p className="eyebrow-sm">Swag inventory</p><h2 id="item-modal-heading">{order ? 'Edit item' : 'Add new item'}</h2></div><button className="close-button" ref={closeButtonRef} type="button" onClick={onClose} aria-label="Close item form">×</button></div>
         <form onSubmit={submit}>
-          <div className="modal-image-row"><ImageThumb key={draft.image} order={{ itemName: draft.itemName || 'Swag item', image: draft.image }} decorative /><div><label className="form-label" htmlFor="item-image">CDN image filename or path</label><input id="item-image" className="form-input" type="text" value={draft.image || ''} onChange={(event) => updateField('image', event.target.value)} placeholder="fleetio-backpack.png" /><p className="form-helper">Use a filename/path relative to the Fleetio swag CDN, or paste a full image URL.</p></div></div>
-          <div className="modal-form-grid"><div><label className="form-label" htmlFor="item-name">Item name</label><input id="item-name" className="form-input" type="text" value={draft.itemName} onChange={(event) => updateField('itemName', event.target.value)} placeholder="Fleetio backpack" required /></div><div><label className="form-label" htmlFor="item-status">Status</label><select id="item-status" className="form-input" value={draft.status} onChange={(event) => updateField('status', event.target.value)}>{statuses.map((status) => <option value={status.id} key={status.id}>{status.label}</option>)}</select></div><div><label className="form-label" htmlFor="item-quantity">Quantity to order</label><input id="item-quantity" className="form-input" type="number" min="0" step="1" value={draft.quantity} onChange={(event) => updateField('quantity', event.target.value)} required /></div><div><label className="form-label" htmlFor="item-unit-cost">Cost per item</label><input id="item-unit-cost" className="form-input" type="number" min="0" step="0.01" value={draft.unitCost} onChange={(event) => updateField('unitCost', event.target.value)} required /></div><div><label className="form-label" htmlFor="item-setup-cost">Setup cost</label><input id="item-setup-cost" className="form-input" type="number" min="0" step="0.01" value={draft.setupCost || 0} onChange={(event) => updateField('setupCost', event.target.value)} /></div><div><label className="form-label" htmlFor="item-stock">Stock on hand</label><input id="item-stock" className="form-input" type="number" min="0" step="1" value={draft.stockOnHand ?? ''} onChange={(event) => updateField('stockOnHand', event.target.value)} placeholder="Unknown" /></div><div><label className="form-label" htmlFor="item-vendor">Vendor</label><input id="item-vendor" className="form-input" type="text" value={draft.vendor} onChange={(event) => updateField('vendor', event.target.value)} placeholder="Vendor name" /></div><div><label className="form-label" htmlFor="item-campaign">Campaign</label><input id="item-campaign" className="form-input" type="text" value={draft.campaign} onChange={(event) => updateField('campaign', event.target.value)} placeholder="Campaign or initiative" /></div><div><label className="form-label" htmlFor="item-start-date">Production started</label><input id="item-start-date" className="form-input" type="date" value={draft.startDate} onChange={(event) => updateField('startDate', event.target.value)} /></div><div><label className="form-label" htmlFor="item-ship-date">Estimated ship date</label><input id="item-ship-date" className="form-input" type="date" min={draft.startDate || undefined} value={draft.estimatedShipDate} onChange={(event) => updateField('estimatedShipDate', event.target.value)} /></div><div><label className="form-label" htmlFor="item-actual-shipped-date">Actual shipped date</label><input id="item-actual-shipped-date" className="form-input" type="date" min={draft.startDate || undefined} value={draft.actualShippedDate || ''} onChange={(event) => updateField('actualShippedDate', event.target.value)} /></div><div><label className="form-label" htmlFor="item-arrival-date">Estimated arrival</label><input id="item-arrival-date" className="form-input" type="date" min={draft.actualShippedDate || draft.estimatedShipDate || undefined} value={draft.estimatedArrivalDate} onChange={(event) => updateField('estimatedArrivalDate', event.target.value)} /></div><div><label className="form-label" htmlFor="item-actual-arrival">Actual arrival</label><input id="item-actual-arrival" className="form-input" type="date" min={draft.actualShippedDate || draft.estimatedShipDate || undefined} value={draft.actualArrivalDate || ''} onChange={(event) => updateField('actualArrivalDate', event.target.value)} /></div></div>
+          <div className="modal-image-row"><ImageThumb key={draft.image} order={{ itemName: draft.itemName || 'Swag item', image: draft.image }} decorative /><div><label className="form-label" htmlFor="item-image">Image path</label><input id="item-image" className="form-input" type="text" value={draft.image || ''} onChange={(event) => updateField('image', event.target.value)} placeholder="fleetio-backpack.png" /><p className="form-helper">Use a filename/path relative to the Fleetio swag CDN, or paste a full image URL.</p></div></div>
+          <div className="modal-form-grid"><div><label className="form-label" htmlFor="item-name">Item name</label><input id="item-name" className="form-input" type="text" value={draft.itemName} onChange={(event) => updateField('itemName', event.target.value)} placeholder="Fleetio backpack" required /></div><div><label className="form-label" htmlFor="item-status">Status</label><select id="item-status" className="form-input" value={draft.status} onChange={(event) => updateField('status', event.target.value)}>{statuses.map((status) => <option value={status.id} key={status.id}>{status.label}</option>)}</select></div><div><label className="form-label" htmlFor="item-quantity">Quantity to order</label><input id="item-quantity" className="form-input" type="number" min="0" step="1" value={draft.quantity} onChange={(event) => updateField('quantity', event.target.value)} required /></div><div><label className="form-label" htmlFor="item-unit-cost">Cost per item</label><input id="item-unit-cost" className="form-input" type="number" min="0" step="0.01" value={draft.unitCost} onChange={(event) => updateField('unitCost', event.target.value)} required /></div><div><label className="form-label" htmlFor="item-setup-cost">Setup cost</label><input id="item-setup-cost" className="form-input" type="number" min="0" step="0.01" value={draft.setupCost || 0} onChange={(event) => updateField('setupCost', event.target.value)} /></div><div><label className="form-label" htmlFor="item-stock">Stock on hand</label><input id="item-stock" className="form-input" type="number" min="0" step="1" value={draft.stockOnHand ?? ''} onChange={(event) => updateField('stockOnHand', event.target.value)} placeholder="Unknown" /></div><div><label className="form-label" htmlFor="item-vendor">Vendor</label><input id="item-vendor" className="form-input" type="text" value={draft.vendor} onChange={(event) => updateField('vendor', event.target.value)} placeholder="Vendor name" /></div><div><label className="form-label" htmlFor="item-category">Category</label><select id="item-category" className="form-input" value={draft.category} onChange={(event) => updateField('category', event.target.value)}><option value="">Select a category</option>{categories.map((category) => <option value={category} key={category}>{category}</option>)}</select></div><div><label className="form-label" htmlFor="item-start-date">Production started</label><input id="item-start-date" className="form-input" type="date" value={draft.startDate} onChange={(event) => updateField('startDate', event.target.value)} /></div><div><label className="form-label" htmlFor="item-ship-date">Ship date</label><input id="item-ship-date" className="form-input" type="date" min={draft.startDate || undefined} value={draft.shipDate} onChange={(event) => updateField('shipDate', event.target.value)} /></div><div><label className="form-label" htmlFor="item-arrival-date">Arrival date</label><input id="item-arrival-date" className="form-input" type="date" min={draft.shipDate || undefined} value={draft.arrivalDate} onChange={(event) => updateField('arrivalDate', event.target.value)} /></div></div>
           <fieldset className="tag-fieldset"><legend className="form-label">Tags</legend><div className="tag-checkboxes">{tagOptions.map((tag) => <label className="checkbox-option" key={tag}><input type="checkbox" checked={draftTags.includes(tag)} onChange={() => toggleTag(tag)} />{tag}</label>)}</div><div className="new-tag-row"><label className="sr-only" htmlFor="new-tag">New tag name</label><input id="new-tag" className="form-input" type="text" value={newTag} onChange={(event) => setNewTag(event.target.value)} placeholder="Create a new tag" /><button className="secondary-button" type="button" onClick={addTag}>Add tag</button></div></fieldset>
           <div><label className="form-label" htmlFor="item-notes">Notes</label><textarea id="item-notes" className="form-input form-textarea" value={draft.notes} onChange={(event) => updateField('notes', event.target.value)} placeholder="Add production notes…" rows="3" /></div>
           <div className="modal-actions"><button className="secondary-button" type="button" onClick={onClose}>Cancel</button><button className="primary-button" type="submit">{order ? 'Save changes' : 'Add item'}</button></div>
@@ -568,8 +546,8 @@ function ItemModal({ order, availableTags = [], isOpen, onClose, onSave, onAddTa
 }
 
 function exportCsv(orders) {
-  const headers = ['Item', 'Category', 'Size', 'Color', 'Status', 'Tags', 'Vendor', 'Campaign', 'Quantity to order', 'Stock on hand', 'Unit cost', 'Product value', 'Setup cost', 'Order value', 'Production started', 'Estimated ship', 'Shipped date', 'Arrival date', 'Image URL'];
-  const rows = orders.map((order) => [order.itemName, order.category || '', order.variants?.length ? order.variants.map((variant) => `${variant.size}: ${variant.quantity}`).join('; ') : order.size || '', order.color || '', statusInfo(order.status).label, (order.tags || []).join('; '), order.vendor || '', order.campaign || '', order.quantity, order.stockOnHand ?? '', order.variants?.length ? 'Varies by size' : order.unitCost, totalCost(order), order.setupCost || 0, orderCommitment(order), order.startDate || '', order.estimatedShipDate || '', order.actualShippedDate || '', arrivalDate(order) || '', getImageUrl(order.image)]);
+  const headers = ['Item', 'Category', 'Size', 'Color', 'Status', 'Tags', 'Vendor', 'Quantity to order', 'Stock on hand', 'Unit cost', 'Product value', 'Setup cost', 'Order value', 'Production started', 'Ship date', 'Shipped date', 'Arrival date', 'Image URL'];
+  const rows = orders.map((order) => [order.itemName, order.category || '', order.variants?.length ? order.variants.map((variant) => `${variant.size}: ${variant.quantity}`).join('; ') : order.size || '', order.color || '', statusInfo(order.status).label, (order.tags || []).join('; '), order.vendor || '', order.quantity, order.stockOnHand ?? '', order.variants?.length ? 'Varies by size' : order.unitCost, totalCost(order), order.setupCost || 0, orderCommitment(order), order.startDate || '', order.shipDate || '', order.arrivalDate || '', getImageUrl(order.image)]);
   const csvValue = (value) => {
     const text = String(value ?? '');
     return /^[=+\-@]/.test(text) ? `'${text}` : text;
@@ -683,7 +661,7 @@ export default function Home() {
     const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
     const matchesTag = tagFilter === 'all' || order.tags.includes(tagFilter);
     const search = query.trim().toLowerCase();
-    const matchesQuery = !search || [order.itemName, order.vendor, order.campaign, ...order.tags].join(' ').toLowerCase().includes(search);
+    const matchesQuery = !search || [order.itemName, order.vendor, order.category, ...order.tags].join(' ').toLowerCase().includes(search);
     return matchesStatus && matchesTag && matchesQuery;
   }), [orders, query, statusFilter, tagFilter]);
 
@@ -698,15 +676,15 @@ export default function Home() {
     const today = localToday();
     setOrders((current) => current.map((order) => {
       if (order.id !== id) return order;
-      const actualShippedDate = status === 'shipped' && !order.actualShippedDate ? today : order.actualShippedDate;
-      const actualArrivalDate = status === 'stock' && !order.actualArrivalDate ? today : order.actualArrivalDate;
-      return withStageDates({ ...order, status, actualShippedDate, actualArrivalDate });
+      const nextShipDate = status === 'shipped' && !order.shipDate ? today : order.shipDate;
+      const nextArrivalDate = status === 'stock' && !order.arrivalDate ? today : order.arrivalDate;
+      return withStageDates({ ...order, status, shipDate: nextShipDate, arrivalDate: nextArrivalDate });
     }));
     setSelectedOrder((current) => {
       if (!current || current.id !== id) return current;
-      const actualShippedDate = status === 'shipped' && !current.actualShippedDate ? today : current.actualShippedDate;
-      const actualArrivalDate = status === 'stock' && !current.actualArrivalDate ? today : current.actualArrivalDate;
-      return withStageDates({ ...current, status, actualShippedDate, actualArrivalDate });
+      const nextShipDate = status === 'shipped' && !current.shipDate ? today : current.shipDate;
+      const nextArrivalDate = status === 'stock' && !current.arrivalDate ? today : current.arrivalDate;
+      return withStageDates({ ...current, status, shipDate: nextShipDate, arrivalDate: nextArrivalDate });
     });
   }
 
@@ -743,14 +721,13 @@ export default function Home() {
 
   function prepareSavedOrder(draft) {
     const startDate = draft.startDate || '';
-    const shipDate = draft.estimatedShipDate && startDate && draft.estimatedShipDate < startDate ? startDate : draft.estimatedShipDate || '';
-    const arrivalDateValue = draft.estimatedArrivalDate && shipDate && draft.estimatedArrivalDate < shipDate ? shipDate : draft.estimatedArrivalDate || '';
-    const actualArrival = draft.actualArrivalDate && shipDate && draft.actualArrivalDate < shipDate ? shipDate : draft.actualArrivalDate || '';
+    const nextShipDate = draft.shipDate && startDate && draft.shipDate < startDate ? startDate : draft.shipDate || '';
+    const nextArrivalDate = draft.arrivalDate && nextShipDate && draft.arrivalDate < nextShipDate ? nextShipDate : draft.arrivalDate || '';
     const variants = Array.isArray(draft.variants) ? draft.variants.map((variant) => ({ ...variant, size: variant.size || 'One size', quantity: Number(variant.quantity) || 0, stockOnHand: variant.stockOnHand === '' || variant.stockOnHand == null ? null : Number(variant.stockOnHand), unitCost: Number(variant.unitCost) || 0 })) : [];
     const quantity = variants.length ? variants.reduce((sum, variant) => sum + variant.quantity, 0) : Number(draft.quantity) || 0;
     const variantValue = variants.reduce((sum, variant) => sum + variant.quantity * variant.unitCost, 0);
     const stockOnHand = variants.length && variants.some((variant) => variant.stockOnHand != null) ? variants.reduce((sum, variant) => sum + (variant.stockOnHand || 0), 0) : draft.stockOnHand == null || draft.stockOnHand === '' ? null : Number(draft.stockOnHand);
-    return withStageDates({ ...draft, id: draft.id || `swag-${Date.now()}`, quantity, unitCost: variants.length && quantity ? variantValue / quantity : Number(draft.unitCost) || 0, setupCost: Number(draft.setupCost || 0), stockOnHand, variants, startDate, estimatedShipDate: shipDate, actualShippedDate: draft.actualShippedDate || '', estimatedArrivalDate: arrivalDateValue, actualArrivalDate: actualArrival });
+    return withStageDates({ ...draft, id: draft.id || `swag-${Date.now()}`, quantity, unitCost: variants.length && quantity ? variantValue / quantity : Number(draft.unitCost) || 0, setupCost: Number(draft.setupCost || 0), stockOnHand, variants, startDate, shipDate: nextShipDate, arrivalDate: nextArrivalDate });
   }
 
   function saveItem(draft) {
@@ -809,8 +786,8 @@ export default function Home() {
       <header className="topbar"><Link className="brand" href="/" aria-label="Fleetio Swag Tracker home"><img className="brand-logo" src="/swag-tracker-logo.svg" alt="Swag tracker" /></Link><div className="topbar-actions"><span className={`live-dot ${syncError ? 'live-dot-error' : ''}`} />{syncError ? 'Sync paused' : 'Shared workspace'}<span className="avatar" aria-hidden="true">LD</span></div></header>
       <div className="page-content">
         <section className="hero"><div><p className="eyebrow eyebrow-green">Marketing operations</p><h1>Swag, in motion.</h1><p className="hero-copy">Keep every item, ship date, and dollar visible from first sample to in-stock.</p></div><div className="hero-actions"><button className="secondary-button" type="button" onClick={openNewItem}>Add new item <span aria-hidden="true">+</span></button><button className="primary-button" type="button" onClick={() => exportCsv(filteredOrders)}>Export current view <span aria-hidden="true">↗</span></button></div></section>
-        <section className="metrics-grid" aria-label={hasActiveFilters ? 'Filtered swag overview' : 'Swag overview'}><Metric eyebrow="Total committed" value={currency.format(visibleTotalValue)} detail={hasActiveFilters ? `${filteredOrders.length} of ${orders.length} tracked items` : `${orders.length} tracked items`} tone="metric-green" /><Metric eyebrow="In production" value={currency.format(visibleProductionOrders.reduce((sum, order) => sum + orderCommitment(order), 0))} detail={`${visibleProductionOrders.length} orders`} tone="metric-blue" /><Metric eyebrow="Shipping next" value={currency.format(visibleShippedOrders.reduce((sum, order) => sum + orderCommitment(order), 0))} detail="Estimated arrival this month" tone="metric-purple" /><Metric eyebrow="In stock" value={currency.format(visibleStockOrders.reduce((sum, order) => sum + stockValue(order), 0))} detail="Available to request" tone="metric-yellow" /></section>
-        <section className="workspace-toolbar" aria-label="Order filters"><div className="search-wrap"><label htmlFor="search-orders">Search all swag</label><input id="search-orders" type="search" placeholder="Search item, tag, campaign, or vendor…" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="select-wrap"><label htmlFor="status-filter">Status</label><select id="status-filter" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{statuses.map((status) => <option key={status.id} value={status.id}>{status.label}</option>)}</select></div><div className="select-wrap"><label htmlFor="tag-filter">Tag</label><select id="tag-filter" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="all">All tags</option>{availableTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></div><div className="filter-result-wrap"><span className="filter-result">Showing {filteredOrders.length} of {orders.length}</span>{hasActiveFilters && <button className="clear-filters" type="button" onClick={clearFilters}>Clear view</button>}</div></section>
+        <section className="metrics-grid" aria-label={hasActiveFilters ? 'Filtered swag overview' : 'Swag overview'}><Metric eyebrow="Total committed" value={currency.format(visibleTotalValue)} detail={hasActiveFilters ? `${filteredOrders.length} of ${orders.length} tracked items` : `${orders.length} tracked items`} tone="metric-green" /><Metric eyebrow="In production" value={currency.format(visibleProductionOrders.reduce((sum, order) => sum + orderCommitment(order), 0))} detail={`${visibleProductionOrders.length} orders`} tone="metric-blue" /><Metric eyebrow="Shipping next" value={currency.format(visibleShippedOrders.reduce((sum, order) => sum + orderCommitment(order), 0))} detail="Arrival this month" tone="metric-purple" /><Metric eyebrow="In stock" value={currency.format(visibleStockOrders.reduce((sum, order) => sum + stockValue(order), 0))} detail="Available to request" tone="metric-yellow" /></section>
+        <section className="workspace-toolbar" aria-label="Order filters"><div className="search-wrap"><label htmlFor="search-orders">Search all swag</label><input id="search-orders" type="search" placeholder="Search item, tag, category, or vendor…" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="select-wrap"><label htmlFor="status-filter">Status</label><select id="status-filter" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{statuses.map((status) => <option key={status.id} value={status.id}>{status.label}</option>)}</select></div><div className="select-wrap"><label htmlFor="tag-filter">Tag</label><select id="tag-filter" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="all">All tags</option>{availableTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></div><div className="filter-result-wrap"><span className="filter-result">Showing {filteredOrders.length} of {orders.length}</span>{hasActiveFilters && <button className="clear-filters" type="button" onClick={clearFilters}>Clear view</button>}</div></section>
         <div className="primary-grid"><Calendar orders={filteredOrders} viewDate={viewDate} onChangeMonth={changeMonth} onSelect={openOrder} /><aside className="panel cost-panel" aria-labelledby="cost-heading"><div className="section-heading"><div><p className="eyebrow-sm">Budget view</p><h2 id="cost-heading">Cost by tag</h2></div></div>{tagCosts.length ? <div className="cost-list">{tagCosts.map((item) => <button className="cost-row" key={item.tag} type="button" onClick={() => setTagFilter(item.tag)}><span><Tag>{item.tag}</Tag></span><strong>{currency.format(item.value)}</strong><span className="cost-bar"><i style={{ width: `${(item.value / (tagCosts[0]?.value || 1)) * 100}%` }} /></span></button>)}</div> : <p className="helper-text">No matching spend in this view yet.</p>}<p className="helper-text">Multi-tag orders split evenly across their tags until specific allocations are entered.</p></aside></div>
         <Timeline orders={filteredOrders} viewDate={viewDate} onSelect={openOrder} />
         <StatusBoard orders={filteredOrders} onSelect={openOrder} onStatusChange={updateStatus} />
