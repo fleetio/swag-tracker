@@ -126,17 +126,18 @@ const seededOrders = [
     quantity: 1000, stockOnHand: null, unitCost: 1.75, setupCost: 35, status: 'sourcing', ...sharedFields,
   },
   {
-    id: 'existing-007', itemName: 'Skyline Long Sleeve T-Shirt', image: 'ls-shirt-front.png', category: 'Apparel', size: '', color: '',
-    quantity: 113, stockOnHand: null, unitCost: 24, setupCost: 0, status: 'production', tags: ['Fleet Locker'],
-    variants: [
-      { id: 'existing-007-S', size: 'S', quantity: 15, stockOnHand: null, unitCost: 24 },
-      { id: 'existing-007-M', size: 'M', quantity: 25, stockOnHand: null, unitCost: 24 },
-      { id: 'existing-007-L', size: 'L', quantity: 25, stockOnHand: null, unitCost: 24 },
-      { id: 'existing-007-XL', size: 'XL', quantity: 25, stockOnHand: null, unitCost: 24 },
-      { id: 'existing-007-2XL', size: '2XL', quantity: 15, stockOnHand: null, unitCost: 24 },
-      { id: 'existing-007-3XL', size: '3XL', quantity: 5, stockOnHand: null, unitCost: 24 },
-      { id: 'existing-007-4XL', size: '4XL', quantity: 3, stockOnHand: null, unitCost: 24 },
-    ],
+    id: 'existing-010', itemName: 'Gift Bags', image: 'gift-bag.png', category: 'Misc', size: '', color: 'Green',
+    quantity: 1000, stockOnHand: null, unitCost: 1.45, setupCost: 0, status: 'production', tags: ['Fleet Locker'],
+    vendor: 'Concepts', notes: '36x29.5x12cm, with two size logo; same last time order', startDate: '2026-10-16', shipDate: '', arrivalDate: '',
+  },
+  {
+    id: 'existing-011', itemName: 'Tissue Paper', image: 'tissue-paper.png', category: 'Misc', size: '', color: 'Green',
+    quantity: 2000, stockOnHand: null, unitCost: 0.275, setupCost: 0, status: 'production', tags: ['Fleet Locker'],
+    vendor: 'Concepts', notes: '17g 380x500mm, with your logo', startDate: '2026-10-16', shipDate: '', arrivalDate: '',
+  },
+  {
+    id: 'existing-007', itemName: 'LS shirt', image: 'ls-shirt-front.png', category: 'Apparel', size: '', color: '',
+    quantity: 180, stockOnHand: null, unitCost: 24, setupCost: 0, status: 'production', tags: ['Fleet Locker'],
     vendor: 'Concepts', notes: '', startDate: defaultSourcingDate, shipDate: '2026-09-17', arrivalDate: '2026-09-24',
   },
   {

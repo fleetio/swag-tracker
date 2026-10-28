@@ -60,6 +60,19 @@ function arrivalDate(order) {
   return order.arrivalDate;
 }
 
+function leadTimeDays(order) {
+  if (!order.startDate || !arrivalDate(order)) return null;
+  const start = new Date(`${order.startDate}T12:00:00`);
+  const arrival = new Date(`${arrivalDate(order)}T12:00:00`);
+  const days = Math.round((arrival.getTime() - start.getTime()) / 86400000);
+  return days >= 0 ? days : null;
+}
+
+function formatDuration(days) {
+  if (days == null) return '—';
+  return `${days} day${days === 1 ? '' : 's'}`;
+}
+
 function shipDate(order) {
   return order.shipDate;
 }
@@ -91,6 +104,7 @@ function normalizeOrder(order) {
     vendor: order.vendor || '',
     notes: order.notes || '',
     status: order.status || 'sourcing',
+    archived: Boolean(order.archived),
     category: categories.includes(order.category) ? order.category : '',
     size: order.size || '',
     color: order.color || '',
@@ -336,7 +350,7 @@ function OrderTable({ orders, onSelect }) {
             {orders.map((order) => (
               <tr key={order.id}>
                 <td><button className="table-item-button" type="button" onClick={() => onSelect(order)}><span className="table-item"><ImageThumb key={`${order.id}-${order.image}`} order={order} size="small" decorative /><span><strong>{order.itemName}</strong><small>{order.vendor}</small></span></span></button></td>
-                <td><StatusPill status={order.status} /></td>
+                <td><div className="status-cell"><StatusPill status={order.status} />{order.archived && <span className="archived-label">Archived</span>}</div></td>
                 <td><div className="tag-list">{order.tags.slice(0, 2).map((tag) => <Tag key={tag}>{tag}</Tag>)}</div></td>
                 <td>{formatDate(shipDate(order))}</td>
                 <td>{order.quantity}</td>
@@ -366,13 +380,16 @@ function createDrawerDraft(order) {
   return order ? { ...order, setupCost: editableCurrency(order.setupCost), tags: [...order.tags], variants: editableVariants(order) } : null;
 }
 
-function OrderDrawer({ order, onClose, onStatusChange, onSave, onDelete, availableTags = [], onAddTag }) {
+function OrderDrawer({ order, onClose, onStatusChange, onSave, onDelete, onToggleArchive, availableTags = [], onAddTag }) {
   const drawerRef = useRef(null);
   const closeButtonRef = useRef(null);
   const editFormRef = useRef(null);
+  const archiveActionRef = useRef(null);
+  const archiveButtonRef = useRef(null);
   const deleteButtonRef = useRef(null);
   const confirmDeleteButtonRef = useRef(null);
   const [isDeleteConfirming, setIsDeleteConfirming] = useState(false);
+  const [isArchiveConfirming, setIsArchiveConfirming] = useState(false);
   const [newTag, setNewTag] = useState('');
   const [draft, setDraft] = useState(() => createDrawerDraft(order));
 
@@ -381,9 +398,18 @@ function OrderDrawer({ order, onClose, onStatusChange, onSave, onDelete, availab
     requestAnimationFrame(() => deleteButtonRef.current?.focus());
   }
 
+  function cancelArchiveConfirmation() {
+    setIsArchiveConfirming(false);
+    requestAnimationFrame(() => archiveActionRef.current?.focus());
+  }
+
   useEffect(() => {
     if (isDeleteConfirming) confirmDeleteButtonRef.current?.focus();
   }, [isDeleteConfirming]);
+
+  useEffect(() => {
+    if (isArchiveConfirming) archiveButtonRef.current?.focus();
+  }, [isArchiveConfirming]);
 
   useEffect(() => {
     closeButtonRef.current?.focus();
@@ -393,6 +419,10 @@ function OrderDrawer({ order, onClose, onStatusChange, onSave, onDelete, availab
     if (!order) return undefined;
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
+        if (isArchiveConfirming) {
+          cancelArchiveConfirmation();
+          return;
+        }
         if (isDeleteConfirming) {
           cancelDeleteConfirmation();
           return;
@@ -415,7 +445,7 @@ function OrderDrawer({ order, onClose, onStatusChange, onSave, onDelete, availab
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isDeleteConfirming, onClose, order]);
+  }, [isArchiveConfirming, isDeleteConfirming, onClose, order]);
 
   if (!order) return null;
   const draftTags = Array.isArray(draft.tags) ? draft.tags : [];
@@ -461,6 +491,7 @@ function OrderDrawer({ order, onClose, onStatusChange, onSave, onDelete, availab
           <fieldset className="tag-fieldset"><legend className="eyebrow-sm form-label">Campaign</legend><div className="tag-checkboxes">{tagOptions.map((tag) => <label className="checkbox-option" key={tag}><input type="checkbox" checked={draftTags.includes(tag)} onChange={() => toggleTag(tag)} />{tag}</label>)}</div><div className="new-tag-row"><label className="sr-only" htmlFor="drawer-new-campaign">New campaign name</label><input id="drawer-new-campaign" className="form-input" value={newTag} onChange={(event) => setNewTag(event.target.value)} placeholder="Create a new campaign" /><button className="secondary-button" type="button" onClick={addTag}>Add campaign</button></div></fieldset>
           <div><label className="eyebrow-sm form-label" htmlFor="drawer-notes">Notes</label><textarea id="drawer-notes" className="form-input form-textarea" value={draft.notes} onChange={(event) => updateDraft('notes', event.target.value)} rows="3" /></div><p className="form-helper">Changes save automatically when you leave a field.</p>
         </form>
+        {order.archived ? <button className="secondary-button full-width-button" ref={archiveActionRef} type="button" onClick={() => { onToggleArchive(order.id); setDraft((current) => ({ ...current, archived: false })); }}>Restore item</button> : !isArchiveConfirming ? <button className="secondary-button full-width-button" ref={archiveActionRef} type="button" onClick={() => setIsArchiveConfirming(true)}>Archive item</button> : <div className="archive-confirm" role="alert"><p>Archive <strong>{order.itemName}</strong>? It will leave active views but remain searchable in the tracker.</p><div className="archive-confirm-actions"><button className="secondary-button" type="button" onClick={cancelArchiveConfirmation}>Cancel</button><button className="secondary-button" ref={archiveButtonRef} type="button" onClick={() => { onToggleArchive(order.id); setDraft((current) => ({ ...current, archived: true })); setIsArchiveConfirming(false); }}>Archive item</button></div></div>}
         {!isDeleteConfirming ? <button className="danger-button full-width-button" ref={deleteButtonRef} type="button" onClick={() => setIsDeleteConfirming(true)}>Delete item</button> : <div className="delete-confirm" role="alert"><p>Remove <strong>{order.itemName}</strong> from the tracker? This cannot be undone.</p><div className="delete-confirm-actions"><button className="secondary-button" type="button" onClick={cancelDeleteConfirmation}>Cancel</button><button className="danger-button" ref={confirmDeleteButtonRef} type="button" onClick={() => onDelete(order.id)}>Delete permanently</button></div></div>}
       </aside>
     </div>
@@ -479,6 +510,7 @@ const blankOrder = {
   setupCost: 0,
   stockOnHand: null,
   status: 'sourcing',
+  archived: false,
   tags: [],
   vendor: '',
   startDate: defaultSourcingDate,
@@ -555,8 +587,8 @@ function ItemModal({ order, availableTags = [], isOpen, onClose, onSave, onAddTa
 }
 
 function exportCsv(orders) {
-  const headers = ['Item', 'Category', 'Size', 'Color', 'Status', 'Campaign', 'Vendor', 'Quantity to order', 'Stock on hand', 'Unit cost', 'Product value', 'Setup cost', 'Order value', 'Production started', 'Ship date', 'Shipped date', 'Arrival date', 'Image URL'];
-  const rows = orders.map((order) => [order.itemName, order.category || '', order.variants?.length ? order.variants.map((variant) => `${variant.size}: ${variant.quantity}`).join('; ') : order.size || '', order.color || '', statusInfo(order.status).label, (order.tags || []).join('; '), order.vendor || '', order.quantity, order.stockOnHand ?? '', order.variants?.length ? 'Varies by size' : order.unitCost, totalCost(order), order.setupCost || 0, orderCommitment(order), order.startDate || '', order.shipDate || '', order.arrivalDate || '', getImageUrl(order.image)]);
+  const headers = ['Item', 'Category', 'Size', 'Color', 'Status', 'Archived', 'Campaign', 'Vendor', 'Quantity to order', 'Stock on hand', 'Unit cost', 'Product value', 'Setup cost', 'Order value', 'Production started', 'Ship date', 'Shipped date', 'Arrival date', 'Image URL'];
+  const rows = orders.map((order) => [order.itemName, order.category || '', order.variants?.length ? order.variants.map((variant) => `${variant.size}: ${variant.quantity}`).join('; ') : order.size || '', order.color || '', statusInfo(order.status).label, order.archived ? 'Yes' : 'No', (order.tags || []).join('; '), order.vendor || '', order.quantity, order.stockOnHand ?? '', order.variants?.length ? 'Varies by size' : order.unitCost, totalCost(order), order.setupCost || 0, orderCommitment(order), order.startDate || '', order.shipDate || '', order.arrivalDate || '', getImageUrl(order.image)]);
   const csvValue = (value) => {
     const text = String(value ?? '');
     return /^[=+\-@]/.test(text) ? `'${text}` : text;
@@ -596,6 +628,7 @@ export default function Home() {
   const authEnabled = process.env.NODE_ENV === 'production' || process.env.NEXT_PUBLIC_SWAG_AUTH_ENABLED === 'true';
   const { data: session, status: sessionStatus } = useSession();
   const [statusFilter, setStatusFilter] = useState('all');
+  const [viewFilter, setViewFilter] = useState('active');
   const [tagFilter, setTagFilter] = useState('all');
   const [query, setQuery] = useState('');
   const viewQueryRef = useRef(null);
@@ -605,15 +638,17 @@ export default function Home() {
     const urlView = {
       tag: typeof router.query.tag === 'string' ? router.query.tag : 'all',
       status: typeof router.query.status === 'string' ? router.query.status : 'all',
+      view: ['active', 'archived', 'all'].includes(router.query.view) ? router.query.view : 'active',
       search: typeof router.query.search === 'string' ? router.query.search : '',
     };
     const urlSignature = JSON.stringify(urlView);
-    const currentView = { tag: tagFilter, status: statusFilter, search: query };
+    const currentView = { tag: tagFilter, status: statusFilter, view: viewFilter, search: query };
     const currentSignature = JSON.stringify(currentView);
     if (viewQueryRef.current === null) {
       viewQueryRef.current = urlSignature;
       setTagFilter(urlView.tag);
       setStatusFilter(urlView.status);
+      setViewFilter(urlView.view);
       setQuery(urlView.search);
       return;
     }
@@ -621,10 +656,11 @@ export default function Home() {
     const nextQuery = {};
     if (tagFilter !== 'all') nextQuery.tag = tagFilter;
     if (statusFilter !== 'all') nextQuery.status = statusFilter;
+    if (viewFilter !== 'active') nextQuery.view = viewFilter;
     if (query.trim()) nextQuery.search = query.trim();
     viewQueryRef.current = currentSignature;
     router.replace({ pathname: router.pathname, query: nextQuery }, undefined, { shallow: true });
-  }, [query, router, router.isReady, router.pathname, router.query.search, router.query.status, router.query.tag, statusFilter, tagFilter]);
+  }, [query, router, router.isReady, router.pathname, router.query.search, router.query.status, router.query.tag, router.query.view, statusFilter, tagFilter, viewFilter]);
 
   useEffect(() => {
     if (authEnabled && (sessionStatus === 'loading' || !session)) return undefined;
@@ -698,19 +734,24 @@ export default function Home() {
   }, [availableTags, orders]);
 
   const filteredOrders = useMemo(() => orders.filter((order) => {
+    const matchesView = viewFilter === 'all' || (viewFilter === 'archived' ? order.archived : !order.archived);
     const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
     const matchesTag = tagFilter === 'all' || order.tags.includes(tagFilter);
     const search = query.trim().toLowerCase();
     const matchesQuery = !search || [order.itemName, order.vendor, order.category, ...order.tags].join(' ').toLowerCase().includes(search);
-    return matchesStatus && matchesTag && matchesQuery;
-  }), [orders, query, statusFilter, tagFilter]);
+    return matchesView && matchesStatus && matchesTag && matchesQuery;
+  }), [orders, query, statusFilter, tagFilter, viewFilter]);
 
-  const hasActiveFilters = Boolean(query.trim()) || statusFilter !== 'all' || tagFilter !== 'all';
+  const hasActiveFilters = Boolean(query.trim()) || statusFilter !== 'all' || tagFilter !== 'all' || viewFilter !== 'active';
   const visibleProductionOrders = filteredOrders.filter((order) => order.status === 'production');
   const visibleShippedOrders = filteredOrders.filter((order) => order.status === 'shipped');
   const visibleStockOrders = filteredOrders.filter((order) => order.status === 'stock');
   const visibleTotalValue = filteredOrders.reduce((sum, order) => sum + orderCommitment(order), 0);
   const tagCosts = availableTags.map((tag) => ({ tag, value: filteredOrders.reduce((sum, order) => sum + costForTag(order, tag), 0) })).filter((item) => item.value > 0).sort((a, b) => b.value - a.value);
+  const completedLeadTimes = filteredOrders.map(leadTimeDays).filter((days) => days != null);
+  const averageLeadTime = completedLeadTimes.length
+    ? Math.round(completedLeadTimes.reduce((sum, days) => sum + days, 0) / completedLeadTimes.length)
+    : null;
 
   function updateStatus(id, status) {
     const today = localToday();
@@ -792,6 +833,11 @@ export default function Home() {
     requestAnimationFrame(() => lastTriggerRef.current?.focus());
   }
 
+  function toggleArchive(id) {
+    setOrders((current) => current.map((order) => order.id === id ? { ...order, archived: !order.archived } : order));
+    setSelectedOrder((current) => current && current.id === id ? { ...current, archived: !current.archived } : current);
+  }
+
   function addTag(tag) {
     setAvailableTags((current) => current.includes(tag) ? current : [...current, tag]);
   }
@@ -800,6 +846,7 @@ export default function Home() {
     setQuery('');
     setStatusFilter('all');
     setTagFilter('all');
+    setViewFilter('active');
   }
 
   async function handlePasswordSignIn(event) {
@@ -828,14 +875,14 @@ export default function Home() {
       <header className="topbar"><Link className="brand" href="/" aria-label="Fleetio Swag Tracker home"><img className="brand-logo" src="/swag-tracker-logo.svg" alt="Swag tracker" /></Link><div className="topbar-actions"><span className={`live-dot ${syncError ? 'live-dot-error' : ''}`} />{syncError ? 'Sync paused' : 'Shared workspace'}<span className="avatar" aria-hidden="true">LD</span></div></header>
       <div className="page-content">
         <section className="hero"><div><p className="eyebrow eyebrow-green">Marketing operations</p><h1>Swag, in motion.</h1><p className="hero-copy">Keep every item, ship date, and dollar visible from first sample to in-stock.</p></div><div className="hero-actions"><button className="secondary-button" type="button" onClick={openNewItem}>Add new item <span aria-hidden="true">+</span></button><button className="primary-button" type="button" onClick={() => exportCsv(filteredOrders)}>Export current view <span aria-hidden="true">↗</span></button></div></section>
-        <section className="metrics-grid" aria-label={hasActiveFilters ? 'Filtered swag overview' : 'Swag overview'}><Metric eyebrow="Total committed" value={currency.format(visibleTotalValue)} detail={hasActiveFilters ? `${filteredOrders.length} of ${orders.length} tracked items` : `${orders.length} tracked items`} tone="metric-green" /><Metric eyebrow="In production" value={currency.format(visibleProductionOrders.reduce((sum, order) => sum + orderCommitment(order), 0))} detail={`${visibleProductionOrders.length} orders`} tone="metric-blue" /><Metric eyebrow="Shipping next" value={currency.format(visibleShippedOrders.reduce((sum, order) => sum + orderCommitment(order), 0))} detail="Arrival this month" tone="metric-purple" /><Metric eyebrow="In stock" value={currency.format(visibleStockOrders.reduce((sum, order) => sum + stockValue(order), 0))} detail="Available to request" tone="metric-yellow" /></section>
-        <section className="workspace-toolbar" aria-label="Order filters"><div className="search-wrap"><label htmlFor="search-orders">Search all swag</label><input id="search-orders" type="search" placeholder="Search item, campaign, category, or vendor…" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="select-wrap"><label htmlFor="status-filter">Status</label><select id="status-filter" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{statuses.map((status) => <option key={status.id} value={status.id}>{status.label}</option>)}</select></div><div className="select-wrap"><label htmlFor="tag-filter">Campaign</label><select id="tag-filter" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="all">All campaigns</option>{availableTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></div><div className="filter-result-wrap"><span className="filter-result">Showing {filteredOrders.length} of {orders.length}</span>{hasActiveFilters && <button className="clear-filters" type="button" onClick={clearFilters}>Clear view</button>}</div></section>
+        <section className="metrics-grid" aria-label={hasActiveFilters ? 'Filtered swag overview' : 'Swag overview'}><Metric eyebrow="Total committed" value={currency.format(visibleTotalValue)} detail={hasActiveFilters ? `${filteredOrders.length} of ${orders.length} tracked items` : `${orders.length} tracked items`} tone="metric-green" /><Metric eyebrow="In production" value={currency.format(visibleProductionOrders.reduce((sum, order) => sum + orderCommitment(order), 0))} detail={`${visibleProductionOrders.length} orders`} tone="metric-blue" /><Metric eyebrow="Shipping next" value={currency.format(visibleShippedOrders.reduce((sum, order) => sum + orderCommitment(order), 0))} detail="Arrival this month" tone="metric-purple" /><Metric eyebrow="In stock" value={currency.format(visibleStockOrders.reduce((sum, order) => sum + stockValue(order), 0))} detail="Available to request" tone="metric-yellow" /><Metric eyebrow="Avg. time to stock" value={formatDuration(averageLeadTime)} detail={completedLeadTimes.length ? `${completedLeadTimes.length} completed item${completedLeadTimes.length === 1 ? '' : 's'} · start to arrival` : 'No completed items yet'} tone="metric-teal" /></section>
+        <section className="workspace-toolbar" aria-label="Order filters"><div className="search-wrap"><label htmlFor="search-orders">Search all swag</label><input id="search-orders" type="search" placeholder="Search item, campaign, category, or vendor…" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="select-wrap"><label htmlFor="view-filter">View</label><select id="view-filter" value={viewFilter} onChange={(event) => setViewFilter(event.target.value)}><option value="active">Active items</option><option value="archived">Archived items</option><option value="all">All items</option></select></div><div className="select-wrap"><label htmlFor="status-filter">Status</label><select id="status-filter" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{statuses.map((status) => <option key={status.id} value={status.id}>{status.label}</option>)}</select></div><div className="select-wrap"><label htmlFor="tag-filter">Campaign</label><select id="tag-filter" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="all">All campaigns</option>{availableTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></div><div className="filter-result-wrap"><span className="filter-result">Showing {filteredOrders.length} of {orders.length}</span>{hasActiveFilters && <button className="clear-filters" type="button" onClick={clearFilters}>Clear view</button>}</div></section>
         <div className="primary-grid"><Calendar orders={filteredOrders} viewDate={viewDate} onChangeMonth={changeMonth} onSelect={openOrder} /><aside className="panel cost-panel" aria-labelledby="cost-heading"><div className="section-heading"><div><p className="eyebrow-sm">Budget view</p><h2 id="cost-heading">Cost by campaign</h2></div></div>{tagCosts.length ? <div className="cost-list">{tagCosts.map((item) => <button className="cost-row" key={item.tag} type="button" onClick={() => setTagFilter(item.tag)}><span><Tag>{item.tag}</Tag></span><strong>{currency.format(item.value)}</strong><span className="cost-bar"><i style={{ width: `${(item.value / (tagCosts[0]?.value || 1)) * 100}%` }} /></span></button>)}</div> : <p className="helper-text">No matching spend in this view yet.</p>}<p className="helper-text">Multi-campaign orders split evenly across their campaigns until specific allocations are entered.</p></aside></div>
         <Timeline orders={filteredOrders} viewDate={viewDate} onSelect={openOrder} />
         <StatusBoard orders={filteredOrders} onSelect={openOrder} onStatusChange={updateStatus} />
         <OrderTable orders={filteredOrders} onSelect={openOrder} />
       </div>
-      <OrderDrawer key={`drawer-${selectedOrder?.id || 'closed'}`} order={selectedOrder} onClose={closeDrawer} onStatusChange={updateStatus} onSave={saveEditedItem} onDelete={deleteOrder} availableTags={availableTags} onAddTag={addTag} />
+      <OrderDrawer key={`drawer-${selectedOrder?.id || 'closed'}`} order={selectedOrder} onClose={closeDrawer} onStatusChange={updateStatus} onSave={saveEditedItem} onDelete={deleteOrder} onToggleArchive={toggleArchive} availableTags={availableTags} onAddTag={addTag} />
       <ItemModal key={`modal-${isItemModalOpen ? (editingOrder?.id || 'new') : 'closed'}`} order={editingOrder} availableTags={availableTags} isOpen={isItemModalOpen} onClose={closeItemModal} onSave={saveItem} onAddTag={addTag} />
     </main>
   );
