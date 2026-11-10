@@ -631,7 +631,12 @@ export default function Home() {
   const saveQueueRef = useRef(Promise.resolve());
   const skipNextSaveRef = useRef(false);
   const saveBlockedRef = useRef(false);
+  const lastSyncedPayloadRef = useRef('');
   const [syncError, setSyncError] = useState('');
+  const [isLoadingSharedState, setIsLoadingSharedState] = useState(true);
+  const [hasLoadedSharedState, setHasLoadedSharedState] = useState(false);
+  const [isSaveBlocked, setIsSaveBlocked] = useState(false);
+  const [sharedStateRetry, setSharedStateRetry] = useState(0);
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [isSigningIn, setIsSigningIn] = useState(false);
@@ -675,6 +680,11 @@ export default function Home() {
   useEffect(() => {
     if (authEnabled && (sessionStatus === 'loading' || !session)) return undefined;
     let cancelled = false;
+
+    hasHydratedRef.current = false;
+    revisionRef.current = null;
+    saveBlockedRef.current = false;
+
     async function loadSharedState() {
       try {
         const response = await fetch('/api/orders', { cache: 'no-store' });
@@ -703,17 +713,51 @@ export default function Home() {
         if (cancelled) return;
         revisionRef.current = state.revision;
         skipNextSaveRef.current = true;
+        lastSyncedPayloadRef.current = JSON.stringify(state.payload);
         setOrders(state.payload.orders.map(normalizeOrder));
         setAvailableTags(state.payload.availableTags);
         setSyncError('');
         hasHydratedRef.current = true;
+        setIsSaveBlocked(false);
+        setHasLoadedSharedState(true);
+        setIsLoadingSharedState(false);
       } catch (error) {
-        if (!cancelled) setSyncError(error.message);
+        if (!cancelled) {
+          setSyncError(error.message);
+          setIsLoadingSharedState(false);
+        }
       }
     }
     loadSharedState();
     return () => { cancelled = true; };
-  }, [authEnabled, session, sessionStatus]);
+  }, [authEnabled, session, sessionStatus, sharedStateRetry]);
+
+  useEffect(() => {
+    if (!hasLoadedSharedState || (authEnabled && !session)) return undefined;
+    let cancelled = false;
+    const refreshSharedState = async () => {
+      try {
+        const response = await fetch('/api/orders', { cache: 'no-store' });
+        const state = await response.json();
+        if (!response.ok) throw new Error(state.error || 'The tracker data could not be refreshed.');
+        if (cancelled || saveBlockedRef.current || Number(state.revision) === revisionRef.current) return;
+        if (JSON.stringify({ orders, availableTags }) !== lastSyncedPayloadRef.current) return;
+        revisionRef.current = state.revision;
+        skipNextSaveRef.current = true;
+        lastSyncedPayloadRef.current = JSON.stringify(state.payload);
+        setOrders(state.payload.orders.map(normalizeOrder));
+        setAvailableTags(state.payload.availableTags);
+        setSyncError('');
+      } catch (error) {
+        if (!cancelled) setSyncError(error.message);
+      }
+    };
+    const refreshTimer = window.setInterval(refreshSharedState, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(refreshTimer);
+    };
+  }, [authEnabled, availableTags, hasLoadedSharedState, orders, session]);
 
   useEffect(() => {
     if (!hasHydratedRef.current || revisionRef.current == null || saveBlockedRef.current) return;
@@ -731,14 +775,17 @@ export default function Home() {
       const state = await response.json();
       if (response.status === 409) {
         saveBlockedRef.current = true;
+        setIsSaveBlocked(true);
         setSyncError('Another update was detected. Refresh to load the latest tracker data before saving again.');
         return;
       }
       if (!response.ok) throw new Error(state.error || 'The tracker change could not be saved.');
       revisionRef.current = state.revision;
+      lastSyncedPayloadRef.current = JSON.stringify(payload);
       setSyncError('');
     }).catch((error) => {
       saveBlockedRef.current = true;
+      setIsSaveBlocked(true);
       setSyncError(error.message);
     });
   }, [availableTags, orders]);
@@ -859,6 +906,14 @@ export default function Home() {
     setViewFilter('active');
   }
 
+  function reloadSharedState() {
+    hasHydratedRef.current = false;
+    setHasLoadedSharedState(false);
+    setIsSaveBlocked(false);
+    setIsLoadingSharedState(true);
+    setSharedStateRetry((current) => current + 1);
+  }
+
   async function handlePasswordSignIn(event) {
     event.preventDefault();
     setAuthError('');
@@ -878,6 +933,18 @@ export default function Home() {
 
   if (authEnabled && !session) {
     return <main className="app-shell auth-screen"><p className="eyebrow eyebrow-green">Fleetio marketing operations</p><h1>Swag Tracker</h1><p className="hero-copy">Enter the shared password to view and update the swag workspace.</p><form className="auth-form" onSubmit={handlePasswordSignIn}><label className="form-label" htmlFor="tracker-password">Shared password</label><input className="form-input" id="tracker-password" name="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required aria-invalid={Boolean(authError)} />{authError && <p className="auth-error" role="alert">{authError}</p>}<button className="primary-button" type="submit" disabled={isSigningIn}>{isSigningIn ? 'Checking…' : 'Open tracker'}</button></form></main>;
+  }
+
+  if (isLoadingSharedState) {
+    return <main className="app-shell auth-screen"><p className="eyebrow eyebrow-green">Fleetio marketing operations</p><h1>Connecting to the shared tracker…</h1><p className="hero-copy">Loading the latest board so everyone sees the same items and statuses.</p></main>;
+  }
+
+  if (!hasLoadedSharedState) {
+    return <main className="app-shell auth-screen"><p className="eyebrow eyebrow-green">Fleetio marketing operations</p><h1>Shared tracker unavailable</h1><p className="hero-copy">The latest board could not be loaded, so editing is paused to avoid creating a private browser-only copy.</p><p className="auth-error" role="alert">{syncError}</p><button className="primary-button" type="button" onClick={reloadSharedState}>Try again</button></main>;
+  }
+
+  if (isSaveBlocked) {
+    return <main className="app-shell auth-screen"><p className="eyebrow eyebrow-green">Fleetio marketing operations</p><h1>Sync paused</h1><p className="hero-copy">This board changed elsewhere or could not be saved. Reload the shared board before making another edit.</p><p className="auth-error" role="alert">{syncError}</p><button className="primary-button" type="button" onClick={reloadSharedState}>Reload shared board</button></main>;
   }
 
   return (
