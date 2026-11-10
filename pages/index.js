@@ -119,6 +119,13 @@ function normalizeOrder(order) {
   });
 }
 
+function normalizeSharedPayload(payload) {
+  return {
+    orders: (Array.isArray(payload?.orders) ? payload.orders : []).map(normalizeOrder),
+    availableTags: Array.isArray(payload?.availableTags) ? payload.availableTags : tags,
+  };
+}
+
 function costForTag(order, tag) {
   if (!order.tags.includes(tag)) return 0;
   if (order.tagAllocations?.[tag] != null) return orderCommitment(order) * order.tagAllocations[tag];
@@ -632,6 +639,11 @@ export default function Home() {
   const skipNextSaveRef = useRef(false);
   const saveBlockedRef = useRef(false);
   const lastSyncedPayloadRef = useRef('');
+  const latestPayloadRef = useRef({ orders: initialOrders, availableTags: tags });
+  const saveGenerationRef = useRef(0);
+  const saveControllerRef = useRef(null);
+  const pendingSaveCountRef = useRef(0);
+  const refreshInFlightRef = useRef(false);
   const [syncError, setSyncError] = useState('');
   const [isLoadingSharedState, setIsLoadingSharedState] = useState(true);
   const [hasLoadedSharedState, setHasLoadedSharedState] = useState(false);
@@ -642,6 +654,7 @@ export default function Home() {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const authEnabled = process.env.NODE_ENV === 'production' || process.env.NEXT_PUBLIC_SWAG_AUTH_ENABLED === 'true';
   const { data: session, status: sessionStatus } = useSession();
+  const authSessionKey = authEnabled ? session?.user?.name || session?.user?.email || '' : 'local';
   const [statusFilter, setStatusFilter] = useState('all');
   const [viewFilter, setViewFilter] = useState('active');
   const [tagFilter, setTagFilter] = useState('all');
@@ -678,9 +691,11 @@ export default function Home() {
   }, [query, router, router.isReady, router.pathname, router.query.search, router.query.status, router.query.tag, router.query.view, statusFilter, tagFilter, viewFilter]);
 
   useEffect(() => {
-    if (authEnabled && (sessionStatus === 'loading' || !session)) return undefined;
+    if (authEnabled && !authSessionKey) return undefined;
     let cancelled = false;
 
+    saveGenerationRef.current += 1;
+    saveControllerRef.current?.abort();
     hasHydratedRef.current = false;
     revisionRef.current = null;
     saveBlockedRef.current = false;
@@ -711,11 +726,12 @@ export default function Home() {
           }
         }
         if (cancelled) return;
+        const normalizedPayload = normalizeSharedPayload(state.payload);
         revisionRef.current = state.revision;
         skipNextSaveRef.current = true;
-        lastSyncedPayloadRef.current = JSON.stringify(state.payload);
-        setOrders(state.payload.orders.map(normalizeOrder));
-        setAvailableTags(state.payload.availableTags);
+        lastSyncedPayloadRef.current = JSON.stringify(normalizedPayload);
+        setOrders(normalizedPayload.orders);
+        setAvailableTags(normalizedPayload.availableTags);
         setSyncError('');
         hasHydratedRef.current = true;
         setIsSaveBlocked(false);
@@ -730,26 +746,43 @@ export default function Home() {
     }
     loadSharedState();
     return () => { cancelled = true; };
-  }, [authEnabled, session, sessionStatus, sharedStateRetry]);
+  }, [authEnabled, authSessionKey, sharedStateRetry]);
 
   useEffect(() => {
-    if (!hasLoadedSharedState || (authEnabled && !session)) return undefined;
+    latestPayloadRef.current = { orders, availableTags };
+  }, [availableTags, orders]);
+
+  useEffect(() => {
+    if (!hasLoadedSharedState || (authEnabled && !authSessionKey)) return undefined;
     let cancelled = false;
     const refreshSharedState = async () => {
+      if (refreshInFlightRef.current) return;
+      refreshInFlightRef.current = true;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 15000);
       try {
-        const response = await fetch('/api/orders', { cache: 'no-store' });
+        const response = await fetch('/api/orders', { cache: 'no-store', signal: controller.signal });
         const state = await response.json();
         if (!response.ok) throw new Error(state.error || 'The tracker data could not be refreshed.');
-        if (cancelled || saveBlockedRef.current || Number(state.revision) === revisionRef.current) return;
-        if (JSON.stringify({ orders, availableTags }) !== lastSyncedPayloadRef.current) return;
-        revisionRef.current = state.revision;
+        const incomingRevision = Number(state.revision);
+        if (cancelled || saveBlockedRef.current || pendingSaveCountRef.current > 0 || incomingRevision <= Number(revisionRef.current)) return;
+        if (JSON.stringify(latestPayloadRef.current) !== lastSyncedPayloadRef.current) return;
+        const normalizedPayload = normalizeSharedPayload(state.payload);
+        revisionRef.current = incomingRevision;
         skipNextSaveRef.current = true;
-        lastSyncedPayloadRef.current = JSON.stringify(state.payload);
-        setOrders(state.payload.orders.map(normalizeOrder));
-        setAvailableTags(state.payload.availableTags);
+        lastSyncedPayloadRef.current = JSON.stringify(normalizedPayload);
+        setOrders(normalizedPayload.orders);
+        setAvailableTags(normalizedPayload.availableTags);
         setSyncError('');
       } catch (error) {
-        if (!cancelled) setSyncError(error.message);
+        if (!cancelled) {
+          saveBlockedRef.current = true;
+          setIsSaveBlocked(true);
+          setSyncError(error.name === 'AbortError' ? 'The shared board refresh timed out. Reload the shared board to try again.' : error.message);
+        }
+      } finally {
+        window.clearTimeout(timeout);
+        refreshInFlightRef.current = false;
       }
     };
     const refreshTimer = window.setInterval(refreshSharedState, 10000);
@@ -757,7 +790,7 @@ export default function Home() {
       cancelled = true;
       window.clearInterval(refreshTimer);
     };
-  }, [authEnabled, availableTags, hasLoadedSharedState, orders, session]);
+  }, [authEnabled, authSessionKey, hasLoadedSharedState]);
 
   useEffect(() => {
     if (!hasHydratedRef.current || revisionRef.current == null || saveBlockedRef.current) return;
@@ -766,27 +799,45 @@ export default function Home() {
       return;
     }
     const payload = { orders, availableTags };
+    const saveGeneration = saveGenerationRef.current;
+    pendingSaveCountRef.current += 1;
     saveQueueRef.current = saveQueueRef.current.then(async () => {
-      const response = await fetch('/api/orders', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ baseRevision: revisionRef.current, ...payload }),
-      });
-      const state = await response.json();
-      if (response.status === 409) {
-        saveBlockedRef.current = true;
-        setIsSaveBlocked(true);
-        setSyncError('Another update was detected. Refresh to load the latest tracker data before saving again.');
-        return;
+      try {
+        if (saveBlockedRef.current || saveGeneration !== saveGenerationRef.current) return;
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 15000);
+        saveControllerRef.current = controller;
+        try {
+          const response = await fetch('/api/orders', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ baseRevision: revisionRef.current, ...payload }),
+            signal: controller.signal,
+          });
+          const state = await response.json();
+          if (saveGeneration !== saveGenerationRef.current || controller.signal.aborted) return;
+          if (response.status === 409) {
+            saveBlockedRef.current = true;
+            setIsSaveBlocked(true);
+            setSyncError('Another update was detected. Refresh to load the latest tracker data before saving again.');
+            return;
+          }
+          if (!response.ok) throw new Error(state.error || 'The tracker change could not be saved.');
+          revisionRef.current = state.revision;
+          lastSyncedPayloadRef.current = JSON.stringify(payload);
+          setSyncError('');
+        } finally {
+          window.clearTimeout(timeout);
+          if (saveControllerRef.current === controller) saveControllerRef.current = null;
+        }
+      } finally {
+        pendingSaveCountRef.current = Math.max(0, pendingSaveCountRef.current - 1);
       }
-      if (!response.ok) throw new Error(state.error || 'The tracker change could not be saved.');
-      revisionRef.current = state.revision;
-      lastSyncedPayloadRef.current = JSON.stringify(payload);
-      setSyncError('');
     }).catch((error) => {
+      if (saveGeneration !== saveGenerationRef.current) return;
       saveBlockedRef.current = true;
       setIsSaveBlocked(true);
-      setSyncError(error.message);
+      setSyncError(error.name === 'AbortError' ? 'The tracker save timed out. Reload the shared board to try again.' : error.message);
     });
   }, [availableTags, orders]);
 
@@ -907,6 +958,8 @@ export default function Home() {
   }
 
   function reloadSharedState() {
+    saveGenerationRef.current += 1;
+    saveControllerRef.current?.abort();
     hasHydratedRef.current = false;
     setHasLoadedSharedState(false);
     setIsSaveBlocked(false);
@@ -936,7 +989,7 @@ export default function Home() {
   }
 
   if (isLoadingSharedState) {
-    return <main className="app-shell auth-screen"><p className="eyebrow eyebrow-green">Fleetio marketing operations</p><h1>Connecting to the shared tracker…</h1><p className="hero-copy">Loading the latest board so everyone sees the same items and statuses.</p></main>;
+    return <main className="app-shell auth-screen"><p className="eyebrow eyebrow-green">Fleetio marketing operations</p><h1>Connecting to the shared tracker…</h1><p className="hero-copy" role="status" aria-live="polite">Loading the latest board so everyone sees the same items and statuses.</p></main>;
   }
 
   if (!hasLoadedSharedState) {
