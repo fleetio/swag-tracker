@@ -75,12 +75,12 @@ function formatDuration(days) {
 
 function getTrackingDetails(trackingNumber) {
   const value = String(trackingNumber || '').trim();
-  const compactValue = value.replace(/\s+/g, '');
+  const compactValue = value.replace(/[^0-9A-Z]/gi, '');
   if (!compactValue) return null;
   if (/^1Z[0-9A-Z]{16}$/i.test(compactValue)) {
     return { carrier: 'UPS', url: `https://www.ups.com/track?loc=en_US&tracknum=${encodeURIComponent(compactValue)}` };
   }
-  if (/^\d{12}$/.test(compactValue) || /^\d{15}$/.test(compactValue)) {
+  if (/^\d{12,15}$/.test(compactValue)) {
     return { carrier: 'FedEx', url: `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(compactValue)}` };
   }
   if (/^(?:\d{20,26}|[A-Z]{2}\d{9}US)$/i.test(compactValue)) {
@@ -92,7 +92,7 @@ function getTrackingDetails(trackingNumber) {
   if (/^TBA\d{10,}$/i.test(compactValue)) {
     return { carrier: 'Amazon Logistics', url: `https://track.amazon.com/tracking/${encodeURIComponent(compactValue)}` };
   }
-  return null;
+  return { carrier: 'multi-carrier', url: `https://www.17track.net/en?nums=${encodeURIComponent(compactValue)}` };
 }
 
 function TrackingLink({ order }) {
